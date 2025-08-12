@@ -4,6 +4,7 @@ import LoginPage from './components/LoginPage';
 import RegisterPage from './components/RegisterPage';
 import DashboardPage from './components/DashboardPage';
 import LegislationPage from './components/LegislationPage';
+import BudgetPage from './components/BudgetPage';
 import './App.css';
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/legislation" element={<LegislationPage />} />
+          <Route path="/budget" element={<BudgetPage />} />
           <Route path="/" element={<HomePage />} />
         </Routes>
       </main>

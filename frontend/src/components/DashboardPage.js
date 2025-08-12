@@ -6,6 +6,7 @@ import EventModal from './EventModal';
 const DashboardPage = () => {
   const [gameState, setGameState] = useState(null);
   const [error, setError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
 
   const getAuthHeader = () => {
     const token = localStorage.getItem('token');
@@ -55,6 +56,23 @@ const DashboardPage = () => {
     setGameState(newGameState);
   };
 
+  const handleGiveSpeech = async () => {
+    try {
+      const response = await axios.post('/api/actions/give_speech', {}, { headers: getAuthHeader() });
+      setGameState(response.data);
+      setActionMessage(response.data.last_action_result.message);
+      // Clear the message after a few seconds
+      setTimeout(() => setActionMessage(''), 4000);
+    } catch (err) {
+      if (err.response) {
+        setActionMessage(err.response.data.message);
+        setTimeout(() => setActionMessage(''), 4000);
+      } else {
+        setError('Failed to perform action.');
+      }
+    }
+  };
+
   useEffect(() => {
     fetchGameState();
   }, []);
@@ -98,12 +116,21 @@ const DashboardPage = () => {
         </button>
       </div>
 
-      <div className="actions-nav" style={{ marginTop: '20px' }}>
-        <h3>Actions</h3>
+      <div className="actions-nav" style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
+        <h3>Player Actions</h3>
         <Link to="/legislation" style={isEventActive ? { pointerEvents: 'none', color: 'grey' } : {}}>
           View & Enact Legislation
         </Link>
+        <Link to="/budget" style={isEventActive ? { pointerEvents: 'none', color: 'grey' } : {}}>
+          Manage Budget
+        </Link>
+
+        <h4>Public Engagement</h4>
+        <button onClick={handleGiveSpeech} disabled={isEventActive}>
+          Give Speech (Cost: 5 Ψ)
+        </button>
       </div>
+      {actionMessage && <p style={{ marginTop: '10px', color: 'blue' }}>{actionMessage}</p>}
     </div>
   );
 };

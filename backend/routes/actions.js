@@ -83,6 +83,135 @@ router.post('/enact_policy', async (req, res) => {
   }
 });
 
+// POST /api/actions/manage_budget
+router.post('/manage_budget', async (req, res) => {
+  const { playerId } = req.player;
+  const { allocations } = req.body; // e.g., { "healthcare": 40, "education": 30, "infrastructure": 30 }
+
+  if (!allocations || typeof allocations !== 'object') {
+    return res.status(400).json({ message: 'Allocations object is required.' });
+  }
+
+  // Basic validation: ensure percentages add up to 100
+  const totalAllocation = Object.values(allocations).reduce((sum, value) => sum + Number(value), 0);
+  if (Math.abs(totalAllocation - 100) > 0.01) { // Use a tolerance for float arithmetic
+    return res.status(400).json({ message: 'Allocations must sum to 100%.' });
+  }
+
+  try {
+    await db.query('BEGIN');
+
+    const gsResult = await db.query('SELECT * FROM game_sessions WHERE player_id = $1 AND is_active = TRUE FOR UPDATE', [playerId]);
+    if (gsResult.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ message: 'No active game found.' });
+    }
+    const gs = gsResult.rows[0];
+
+    // Simple immediate effect: gain 1 political capital for managing the budget
+    const newCapital = gs.political_capital + 1;
+
+    // Update game state with new allocations and effects
+    const updatedGs = await db.query(
+      `UPDATE game_sessions SET budget_allocations = $1, political_capital = $2, updated_at = NOW() WHERE session_id = $3`,
+      [JSON.stringify(allocations), newCapital, gs.session_id]
+    );
+
+    // Log the decision
+    const decisionDescription = `Updated budget allocations: ${JSON.stringify(allocations)}.`;
+    await db.query(
+      `INSERT INTO decisions_log (session_id, turn_made, action_type, description) VALUES ($1, $2, $3, $4)`,
+      [gs.session_id, gs.turn_number, 'manage_budget', decisionDescription]
+    );
+
+    await db.query('COMMIT');
+
+    // Return the full, updated game state
+    const finalGameState = await db.query(
+      `SELECT gs.*, r.name as region_name, e.name as event_name, e.description as event_description, e.choices as event_choices
+       FROM game_sessions gs
+       JOIN regions r ON gs.current_jurisdiction_id = r.region_id
+       LEFT JOIN events e ON gs.active_event_id = e.event_id
+       WHERE gs.session_id = $1`,
+      [gs.session_id]
+    );
+
+    res.status(200).json(finalGameState.rows[0]);
+
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Error managing budget:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// POST /api/actions/give_speech
+router.post('/give_speech', async (req, res) => {
+  const { playerId } = req.player;
+  const SPEECH_COST = 5; // Political Capital cost
+
+  try {
+    await db.query('BEGIN');
+
+    const gsResult = await db.query('SELECT * FROM game_sessions WHERE player_id = $1 AND is_active = TRUE FOR UPDATE', [playerId]);
+    if (gsResult.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ message: 'No active game found.' });
+    }
+    const gs = gsResult.rows[0];
+
+    // Check for sufficient political capital
+    if (gs.political_capital < SPEECH_COST) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ message: `Not enough Political Capital. Cost is ${SPEECH_COST}.` });
+    }
+
+    // Randomized effect on Public Approval
+    const approvalChange = Math.floor(Math.random() * 6) - 1; // -1 to +4
+
+    const newCapital = gs.political_capital - SPEECH_COST;
+    const newApproval = parseFloat(gs.public_approval) + approvalChange;
+
+    // Update game state
+    await db.query(
+      `UPDATE game_sessions SET political_capital = $1, public_approval = $2, updated_at = NOW() WHERE session_id = $3`,
+      [newCapital, newApproval.toFixed(2), gs.session_id]
+    );
+
+    // Log the decision
+    const decisionDescription = `Gave a speech. Result: Approval changed by ${approvalChange > 0 ? '+' : ''}${approvalChange}%.`;
+    await db.query(
+      `INSERT INTO decisions_log (session_id, turn_made, action_type, description) VALUES ($1, $2, $3, $4)`,
+      [gs.session_id, gs.turn_number, 'give_speech', decisionDescription]
+    );
+
+    await db.query('COMMIT');
+
+    // Return the full, updated game state, plus the result of the action
+    const finalGameStateResult = await db.query(
+      `SELECT gs.*, r.name as region_name, e.name as event_name, e.description as event_description, e.choices as event_choices
+       FROM game_sessions gs
+       JOIN regions r ON gs.current_jurisdiction_id = r.region_id
+       LEFT JOIN events e ON gs.active_event_id = e.event_id
+       WHERE gs.session_id = $1`,
+      [gs.session_id]
+    );
+
+    const finalGameState = finalGameStateResult.rows[0];
+    // Add a temporary field to the response to inform the UI of the result
+    finalGameState.last_action_result = {
+      message: decisionDescription
+    };
+
+    res.status(200).json(finalGameState);
+
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Error giving speech:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 module.exports = router;
 
 // POST /api/actions/handle_event
